@@ -1,27 +1,16 @@
----
-title: "Nikkei-SPY Analysis"
-output: html_document
-date: "2025-04-21"
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-```{r}
 SP500 <- yahoofinancer::Index$new('^GSPC')
 SP500_1996_on<- SP500$get_history(interval = '1d',
-                              start = '1996-05-09')
+                                  start = '1996-05-09')
 colnames(SP500_1996_on) <- paste('SP500',
-                                colnames(SP500_1996_on),
-                                sep = '_')
+                                 colnames(SP500_1996_on),
+                                 sep = '_')
 SP500_1996_on$SPY_close_price_return <-  100*((SP500_1996_on$SP500_close/dplyr::lag(SP500_1996_on$SP500_close,1))-1)
 
 
 N225 <- yahoofinancer::Ticker$new('^N225')
 N225_1996_on <- N225$get_history(
-                 interval = '1d',
-                 start = '1996-05-09')
+  interval = '1d',
+  start = '1996-05-09')
 
 colnames(N225_1996_on) <- paste('N225',
                                 colnames(N225_1996_on),
@@ -29,8 +18,8 @@ colnames(N225_1996_on) <- paste('N225',
 N225_1996_on$N225_close_price_returns <- 100*((N225_1996_on$N225_close/dplyr::lag(N225_1996_on$N225_close,1))-1)
 
 max_rows <- min(nrow(SP500_1996_on),
-                  nrow(N225_1996_on)
-                  )
+                nrow(N225_1996_on)
+)
 
 merged_finance_data <- cbind(tail(SP500_1996_on,max_rows),
                              tail(N225_1996_on, max_rows))
@@ -50,36 +39,31 @@ ggplot()+
   labs(x = 'Date',
        y = 'Closing Price Return')
 
-
-
-```
-
-```{r}
 library(tsfeatures)
 
 ts_feat_gen = function(series){
   feat_vals <- tsfeatures(series,
-            features = c('stl_features',
-                         'acf_features',
-                         'pacf_features',
-                         'autocorr_features',
-                         'dist_features',
-                         'arch_stat',
-                         'unitroot_kpss',
-                         'hurst',
-                         'entropy',
-                         'nonlinearity',
-                         'stability',
-                         'lumpiness'
-                         
-                         
-                         )
+                          features = c('stl_features',
+                                       'acf_features',
+                                       'pacf_features',
+                                       'autocorr_features',
+                                       'dist_features',
+                                       'arch_stat',
+                                       'unitroot_kpss',
+                                       'hurst',
+                                       'entropy',
+                                       'nonlinearity',
+                                       'stability',
+                                       'lumpiness'
+                                       
+                                       
+                          )
   )
-  feat_vals <- feat_vals[3:length(feat_vals)]
+  # feat_vals <- feat_vals[3:length(feat_vals)]
   
-  feat_vals <- feat_vals[-which(grepl('firstmin_ac|ac_9',names(feat_vals)))]
+  # feat_vals <- feat_vals[-which(grepl('firstmin_ac|ac_9',names(feat_vals)))]
   return(feat_vals)
-  }
+}
 
 
 cosine_sim = function(series1, series2){
@@ -91,21 +75,13 @@ cosine_sim = function(series1, series2){
 
 cosine_sim(ts_feat_gen(merged_finance_data$SPY_close_price_return),
            ts_feat_gen(merged_finance_data$N225_close_price_returns))
-```
-
-
-
-
-
-```{r}
-
 library(doRNG)
 
 cosine_val_gen = function(lag_used, data = merged_finance_data){
   
   merged_data_slices <-  lapply(lag_used:nrow(data),
-                              function(index){
-                                (index-lag_used):index
+                                function(index){
+                                  (index-lag_used):index
                                 })
   sim_name <- paste('cosine_sim_series_',lag_used,'.rds',sep='')
   dist_name <- paste('cosine_dist_series_',lag_used,'.rds',sep='')    
@@ -116,74 +92,63 @@ cosine_val_gen = function(lag_used, data = merged_finance_data){
   if(sim_name %in% list.files()){
     cosine_sim_series <-  readRDS(sim_name)
     cosine_dist_series <- readRDS(dist_name)
-    if(length(cosine_sim_series)<length(merged_data_slices)){
-      cosine_sim_add <- foreach(slice = merged_data_slices[-c(1:length(na.omit(cosine_sim_series))
-                                                            )],
-                              .combine = 'c') %dorng% {
-    
-                  sp500_slice = merged_finance_data$SPY_close_price_return[slice]
-                  n225_slice = merged_finance_data$N225_close_price_returns[slice]
-                  sp500_feat = na.omit(ts_feat_gen(sp500_slice))
-                  n225_feat = na.omit(ts_feat_gen(n225_slice))
-                  
-                  cosine_sim(sp500_feat,
-                             n225_feat)
+    len_used <- length(cosine_sim_series)-(lag_used-1)
+    if(len_used<length(merged_data_slices)){
+      cosine_sim_add <- foreach(slice = merged_data_slices[-c(1:len_used)],
+                                .combine = 'c') %dorng% {
+                                  
+                                  sp500_slice = merged_finance_data$SPY_close_price_return[slice]
+                                  n225_slice = merged_finance_data$N225_close_price_returns[slice]
+                                  sp500_feat = na.omit(ts_feat_gen(sp500_slice))
+                                  n225_feat = na.omit(ts_feat_gen(n225_slice))
+                                  
+                                  cosine_sim(sp500_feat,
+                                             n225_feat)
                                 }
+      
       cosine_dist_add <- 1- cosine_sim_add
       
       cosine_sim_series <- append(cosine_sim_series,
                                   cosine_sim_add)
       cosine_dist_series <- append(cosine_dist_series,
                                    cosine_dist_add)
+      
       readr::write_rds(cosine_sim_series,
-                       sim_name
-                       )
+                       sim_name)
       readr::write_rds(cosine_dist_series,
-                       dist_name
-      )
+                       dist_name)
     }
-    
     
   }
   else {
     cosine_sim_series <- foreach(slice = merged_data_slices) %dorng% {
-    
-                  sp500_slice = merged_finance_data$SPY_close_price_return[slice]
-                  n225_slice = merged_finance_data$N225_close_price_returns[slice]
-                  sp500_feat = na.omit(ts_feat_gen(sp500_slice))
-                  n225_feat = na.omit(ts_feat_gen(n225_slice))
-                  
-                  cosine_sim(sp500_feat,
-                             n225_feat)
-                  }
+      
+      sp500_slice = merged_finance_data$SPY_close_price_return[slice]
+      n225_slice = merged_finance_data$N225_close_price_returns[slice]
+      sp500_feat = na.omit(ts_feat_gen(sp500_slice))
+      n225_feat = na.omit(ts_feat_gen(n225_slice))
+      
+      cosine_sim(sp500_feat,
+                 n225_feat)
+    }
     cosine_sim_series <- unlist(cosine_sim_series)
     cosine_sim_series <- c(rep(NA,(lag_used-1)),
-                                            cosine_sim_series)
+                           cosine_sim_series)
     cosine_dist_series <- 1- cosine_sim_series
     readr::write_rds(cosine_sim_series,
                      sim_name
-                     )
+    )
     readr::write_rds(cosine_dist_series,
                      dist_name
     )
   }
-  }
-
-lag_used = 60
-cosine_val_gen(lag_used)
-
-
-
-```
-
-
-```{r}
+}
 
 
 
 discount_seq_gen_default= function(index, alpha = 0.05){
   0.07720838*(log(max(index,2))/(index*exp(sqrt(log(index)))
-                                        )
+  )
   )
 }
 
@@ -194,27 +159,27 @@ e_rlond_test = function(alpha, data, randomization = TRUE ){
                           discount_seq_gen_default,
                           alpha)
   results <- sapply(1:length_used,
-         function(index){
-           # print(index)
-           if(is.na(data[index])){
-             return(FALSE)
-           }
-           test_level <- alpha*discount_vals[index]*(discoveries+1)
-           if(randomization==TRUE){
-            test_level= max(alpha,test_level)/runif(1)  
-           }
-           
-           
-           if(data[index]>(1/(test_level))
-              ){
-             discoveries <<- discoveries+1
-             return(TRUE)
-             
-           }
-           return(FALSE)
-         }
-         )
-
+                    function(index){
+                      # print(index)
+                      if(is.na(data[index])){
+                        return(FALSE)
+                      }
+                      test_level <- alpha*discount_vals[index]*(discoveries+1)
+                      if(randomization==TRUE){
+                        test_level= max(alpha,test_level)/runif(1)  
+                      }
+                      
+                      
+                      if(data[index]>(1/(test_level))
+                      ){
+                        discoveries <<- discoveries+1
+                        return(TRUE)
+                        
+                      }
+                      return(FALSE)
+                    }
+  )
+  
   which(results)
 }
 
@@ -226,38 +191,38 @@ e_cusum = function(alpha, data, cutoff = 0){
   discovery_ind <- c()
   past_value <- c()
   results <- sapply(1:length_used,
-         function(index){
-           if(index %in% 1:(lag_used)){
-             result <- abs(data[index]-cutoff)
-             if(is.na(result)){
-               past_value <<- append(past_value,0)
-               result <- 0
-             }
-             past_value <<- result
-             
-             if(result>threshold){
-               past_value <<- 0
-               return(TRUE)
-             }
-             return(FALSE)
-           }
-           else{
-             result <- (abs(data[index]-cutoff))*max(1, past_value,na.rm = TRUE)
-             past_value <<- result
-             
-             if(result>threshold){
-               past_value <<- 0
-               return(TRUE)
-             }
-             return(FALSE)
-           }
-         })
+                    function(index){
+                      if(index %in% 1:(lag_used)){
+                        result <- abs(data[index]-cutoff)
+                        if(is.na(result)){
+                          past_value <<- append(past_value,0)
+                          result <- 0
+                        }
+                        past_value <<- result
+                        
+                        if(result>threshold){
+                          past_value <<- 0
+                          return(TRUE)
+                        }
+                        return(FALSE)
+                      }
+                      else{
+                        result <- (abs(data[index]-cutoff))*max(1, past_value,na.rm = TRUE)
+                        past_value <<- result
+                        
+                        if(result>threshold){
+                          past_value <<- 0
+                          return(TRUE)
+                        }
+                        return(FALSE)
+                      }
+                    })
   which(results)
   
 }
 
 e_sr = function(alpha, data, cutoff = 0){
-
+  
   threshold <- 1/alpha
   length_used <- length(data)
   
@@ -265,34 +230,34 @@ e_sr = function(alpha, data, cutoff = 0){
   discovery_ind <- c()
   past_value <- c()
   results <- sapply(1:length_used,
-         function(index){
-           if(index %in% 1:(lag_used)){
-             result <- abs(data[index]-cutoff)
-             if(is.na(result)){
-               past_value <<- append(past_value,
-                                     0)
-               result <- 0
-             }
-             past_value <<- result
-             if(result>threshold){
-               past_value <<-0
-               result <- 0
-               return(TRUE)
-             }
-             return(FALSE)
-           }
-           else{
-             result <- (abs(data[index]-cutoff))*(1+past_value)
-             
-             past_value <<- result
-             if(result>threshold){
-               past_value <<- 0
-               result <- 0
-               return(TRUE)
-             }
-             return(FALSE)
-           }
-         })
+                    function(index){
+                      if(index %in% 1:(lag_used)){
+                        result <- abs(data[index]-cutoff)
+                        if(is.na(result)){
+                          past_value <<- append(past_value,
+                                                0)
+                          result <- 0
+                        }
+                        past_value <<- result
+                        if(result>threshold){
+                          past_value <<-0
+                          result <- 0
+                          return(TRUE)
+                        }
+                        return(FALSE)
+                      }
+                      else{
+                        result <- (abs(data[index]-cutoff))*(1+past_value)
+                        
+                        past_value <<- result
+                        if(result>threshold){
+                          past_value <<- 0
+                          result <- 0
+                          return(TRUE)
+                        }
+                        return(FALSE)
+                      }
+                    })
   which(results)
   
 }
@@ -301,14 +266,14 @@ e_mix <- function(alpha, data, cutoff = 0,
                   method_used = 'SR',
                   min_change = 0.1){
   e_detector_mix <- stcpR6::Stcp$new(method = method_used,#'SR',
-                 family = 'Normal',
-                 alternative = 'two.sided',
-                 threshold = log(1/alpha),
-                 m_pre = cutoff,
-                 delta_lower = min_change
-                 
-            
-                 )
+                                     family = 'Normal',
+                                     alternative = 'two.sided',
+                                     threshold = log(1/alpha),
+                                     m_pre = cutoff,
+                                     delta_lower = min_change
+                                     
+                                     
+  )
   discoveries <- c(0)
   data[which(is.na(data))] <- 1
   length_used <- length(data)
@@ -317,31 +282,29 @@ e_mix <- function(alpha, data, cutoff = 0,
     if(tail(discoveries,1)==0){
       e_detector_mix$updateLogValuesUntilStop(data[1:length_used])
       stop_time <- e_detector_mix$getTime()
-    
-    discoveries <- c(discoveries,
-                              stop_time)
+      
+      discoveries <- c(discoveries,
+                       stop_time)
     }
     else{
       e_detector_mix$updateLogValuesUntilStop(data[tail(discoveries,1):length_used])
       stop_time <- e_detector_mix$getTime()
-    
-   
-    discoveries <- c(discoveries,
-                              (tail(discoveries,1)+stop_time))
+      
+      
+      discoveries <- c(discoveries,
+                       (tail(discoveries,1)+stop_time))
     }
     e_detector_mix$reset()
-      
-           
+    
+    
   }
   return(discoveries[-c(1, length(discoveries))])
   
 }
 
-```
-
-
-```{r}
 lag_used = 60
+
+cosine_val_gen(lag_used)
 
 alpha = 0.05
 
@@ -349,11 +312,11 @@ cosine_sim_series <- unlist(readRDS(paste('cosine_sim_series_',
                                           lag_used,'.rds',
                                           sep = ''
                                           
-                                          )))
+)))
 cosine_dist_series <- unlist(readRDS(paste('cosine_dist_series_',
-                                          lag_used,'.rds'
-                                          ,sep=''
-                                          )))
+                                           lag_used,'.rds'
+                                           ,sep=''
+)))
 cosine_sim_changes <- cosine_sim_series/dplyr::lag(cosine_sim_series,1)
 cosine_dist_changes <- cosine_dist_series/dplyr::lag(cosine_dist_series,1)
 
@@ -361,7 +324,7 @@ merged_finance_data$cosine_dist_change <- c(cosine_dist_changes)
 
 
 phase_change_detection_elond <- e_rlond_test(alpha, abs(cosine_dist_changes),
-                                       randomization = TRUE)
+                                             randomization = TRUE)
 
 e_cusum_detections <- e_cusum(alpha, cosine_dist_changes,
                               cutoff = 0)
@@ -380,29 +343,60 @@ merged_finance_data$detections[e_sr_detections] <-1
 
 data_used <- merged_finance_data[1:nrow(merged_finance_data),]
 dates_used <- data_used$SP500_date
+detections_sr <- as.Date(dates_used[e_sr_detections])
+detections_sr <- detections_sr[order(detections_sr, decreasing = TRUE)]
+write.csv(detections_sr,
+          sprintf('e_sr_detection_dates_FDR_%s_lag_%s.csv',
+                  alpha,lag_used))
 
-write.csv(as.Date(dates_used[e_sr_detections]),
-          paste('e_sr_detection_dates_FDR_',alpha,'.csv',
-                sep = ''))
+detections_mix <- as.Date(dates_used[e_mix_detections])
+detections_mix <- detections_mix[order(e_mix_detections, decreasing = TRUE)]
+write.csv(detections_mix,
+          sprintf('e_mix_detection_dates_FDR_%s_lag_%s.csv',
+                  alpha,lag_used))
 
 ggplot()+
-  geom_point(aes(x =tail(as.Date(dates_used),240),
-                y = tail(unlist(data_used$SP500_close),240),
-                colour = 'dodgerblue4'),alpha = 0.5)+
-    # geom_point(aes(x =tail(as.Date(dates_used),1000),
-    #             y = tail(unlist(data_used$N225_close),1000),
-    #             colour = 'orange'),alpha = 0.5)+
+  geom_point(aes(x =tail(as.Date(dates_used),120),
+                 y = tail(unlist(data_used$SP500_close),120),
+                 colour = 'dodgerblue4'),alpha = 0.5)+
+  # geom_point(aes(x =tail(as.Date(dates_used),1000),
+  #             y = tail(unlist(data_used$N225_close),1000),
+  #             colour = 'orange'),alpha = 0.5)+
   geom_vline(xintercept  =as.Date(dates_used[e_sr_detections]),
-                 col = 'grey8')+
+             col = 'grey8')+
   scale_color_manual(name = 'Index Close Price',
                      label = c('SPY'),
-                              # 'N225'),
+                     # 'N225'),
                      values = c('dodgerblue4'),#, 'orange'),
                      breaks = c('dodgerblue4'))+#,'orange'))+
   labs(y = 'Close Price',
        x = 'Date',
-       title = paste('SPY Index Close Prices\nwith E-SR Changepoints as Vert. Lines, FDR of',alpha))
+       title = sprintf('SPY Index Close Prices\nwith E-SR Changepoints as Vert. Lines, FDR of %s\nTechnical Features calculated with %s Lags',
+                       alpha, lag_used))
 
 
-ggsave('SPY_close_prices_eSR_Changepoints.jpg')
-```
+ggsave(sprintf('SPY_close_prices_eSR_Changepoints_FDR_%s_lag_%s.jpg',
+               alpha,lag_used))
+
+ggplot()+
+  geom_point(aes(x =tail(as.Date(dates_used),120),
+                 y = tail(unlist(data_used$SP500_close),120),
+                 colour = 'dodgerblue4'),alpha = 0.5)+
+  # geom_point(aes(x =tail(as.Date(dates_used),1000),
+  #             y = tail(unlist(data_used$N225_close),1000),
+  #             colour = 'orange'),alpha = 0.5)+
+  geom_vline(xintercept  =as.Date(dates_used[e_mix_detections]),
+             col = 'grey8')+
+  scale_color_manual(name = 'Index Close Price',
+                     label = c('SPY'),
+                     # 'N225'),
+                     values = c('dodgerblue4'),#, 'orange'),
+                     breaks = c('dodgerblue4'))+#,'orange'))+
+  labs(y = 'Close Price',
+       x = 'Date',
+       title = sprintf('SPY Index Close Prices\nwith E-Mix Changepoints as Vert. Lines, FDR of %s\nTechnical Features calculated with %s Lags',
+                       alpha, lag_used))
+
+
+ggsave(sprintf('SPY_close_prices_eMix_Changepoints_FDR_%s_lag_%s.jpg',
+               alpha,lag_used))
