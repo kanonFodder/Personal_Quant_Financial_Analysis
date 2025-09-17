@@ -1,0 +1,1149 @@
+---
+title: "momentum model"
+output: html_document
+date: "2025-08-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(doRNG)
+library(doFuture)
+library(dplyr)
+library(tidyr)
+year_month_extract = function(date_series, data){
+  
+  data$observation_year <- lubridate::year(date_series)
+  data$observation_month <- lubridate::month(date_series)
+  data$observation_day <- lubridate::day(date_series)
+  return(data)
+}
+
+
+yoy_growth_calc = function(data, col){
+  as.numeric(sapply(1:nrow(data),
+                    function(index){
+         year_used <- data$observation_year[index]
+         month_used <- data$observation_month[index]
+         day_used <- data$observation_day[index]
+         current_value <- as.numeric(data[,col][index])
+         past_values <- dplyr::filter(data,
+                       observation_year == (year_used-1),
+                       observation_month == month_used,
+                       observation_day %in% c(day_used)
+                       )[,col]
+         if(length(past_values)==0){
+           past_values <- dplyr::filter(data,
+                       observation_year == (year_used-1),
+                       observation_month == month_used,
+                       observation_day %in% c(day_used-2,
+                                              day_used-1,
+                                              day_used))[,col]
+           }
+         
+         
+         past_value <- tail(na.omit(as.numeric(past_values)),1)
+         round(100*((current_value/past_value)-1),2)
+       }))
+  
+}
+
+daily_growth_calc = function(data, col){
+  round(100*((data[,col]/dplyr::lag(data[,col],1))-1),
+        2) 
+}
+
+```
+
+
+```{r}
+
+
+
+current_date <- lubridate::date(Sys.time())
+start_date <- '1996-01-01'
+SPY <- yahoofinancer::Index$new('SPY')
+SPY_1996_on<- SPY$get_history(interval = '1d',
+                              start = start_date)
+SPY_price <- data.frame(date =SPY_1996_on$date,
+                        SPY_close_price = SPY_1996_on$close,
+                        SPY_volume = SPY_1996_on$volume)
+SPY_price$date <- sapply(SPY_price$date,
+                         function(date){
+                           strsplit(as.character(date),
+                                    split = ' ')[[1]][[1]]
+                         })
+
+SPY_price <- year_month_extract(SPY_price$date,SPY_price) %>%
+              rename(Date=date)
+
+SPY_price$SPY_dailyGrowth <- daily_growth_calc(SPY_price,
+                                             'SPY_close_price'
+                                             )
+  
+SPY_price$SPY_yoyGrowth <- yoy_growth_calc(SPY_price,
+                                           'SPY_close_price')
+SPY_price$SPY_log_volume <- log(SPY_price$SPY_volume)
+SPY_price$SPY_daily_upInd <- SPY_price$SPY_close_price>dplyr::lag(SPY_price$SPY_close_price,1)
+SPY_price$SPY_daily_downInd <-!SPY_price$SPY_daily_upInd
+SPY_price$SPY_daily_sigUpInd50 <- SPY_price$SPY_dailyGrowth>0.5
+SPY_price$SPY_daily_sigDownInd50 <- SPY_price$SPY_dailyGrowth<(-0.5)
+SPY_price$SPY_daily_sigInd50 <- abs(SPY_price$SPY_dailyGrowth)>0.5
+
+
+SPY_price$SPY_daily_sigIndCat50 <- 1
+SPY_price$SPY_daily_sigIndCat50[which(SPY_price$SPY_daily_sigUpInd50)] <- 2
+SPY_price$SPY_daily_sigIndCat50[which(SPY_price$SPY_daily_sigDownInd50)] <- 0
+
+SPY_price$SPY_daily_sigIndCat50 <- as.factor(SPY_price$SPY_daily_sigIndCat50)
+
+SPY_price$SPY_volume <- NULL
+write.csv(SPY_price,
+          'SPY_price.csv')
+```
+
+```{r}
+VIX <- yahoofinancer::Index$new('^VIX')
+VIX_1996_on<- VIX$get_history(interval = '1d',
+                              start = start_date)
+VIX_price <- data.frame(date =VIX_1996_on$date,
+                        VIX_close_price = VIX_1996_on$close
+                        )
+VIX_price$date <- sapply(VIX_price$date,
+                         function(date){
+                           strsplit(as.character(date),
+                                    split = ' ')[[1]][[1]]
+                         })
+VIX_price <- year_month_extract(VIX_price$date,VIX_price) %>%
+              rename(Date=date)
+
+VIX_price$VIX_dailyGrowth <- daily_growth_calc(VIX_price,
+                                               'VIX_close_price')
+VIX_price$VIX_yoyGrowth <-  yoy_growth_calc(VIX_price,
+                                            'VIX_close_price')
+
+write.csv(VIX_price,
+          'VIX_price.csv')
+#https://fred.stlouisfed.org/series/DGS10
+
+```
+
+
+```{r}
+
+tbill10_link <- 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&'
+
+download.file(tbill10_link,
+              'TBILL10.csv')
+treasury10yrYield <- read.csv('TBILL10.csv') 
+
+treasury10yrYield <- year_month_extract(treasury10yrYield$observation_date,
+                                        treasury10yrYield)
+
+
+treasury10yrYield <- rename(treasury10yrYield,
+                            treasury10Yield=DGS10
+                            )
+
+
+treasury10yrYield$treasury10Yield_yoyGrowth <- yoy_growth_calc(treasury10yrYield,
+                                                               'treasury10Yield')
+treasury10yrYield$treasury10Yield_dailyGrowth <- daily_growth_calc(treasury10yrYield,
+                                                                   'treasury10Yield')
+
+junkbond_link  <- 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2'
+#'https://fred.stlouisfed.org/series/BAMLH0A0HYM2'
+# https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2EY&cosd=2020-01-01&coed=2025-09-12
+download.file(junkbond_link,
+              'highYieldSpread.csv')
+junkBondYield <- read.csv('highYieldSpread.csv')
+
+junkBondYield <- year_month_extract(junkBondYield$observation_date,
+                                        junkBondYield)
+
+
+
+junkBondYield <- rename(junkBondYield,
+                            junkBondSpread=BAMLH0A0HYM2
+                            ) 
+junkBondYield$junkBondSpread_yoyGrowth <-yoy_growth_calc(junkBondYield,
+                                                         'junkBondSpread')
+junkBondYield$junkBondSpread_dailyGrowth <- daily_growth_calc(junkBondYield,
+                                                              'junkBondSpread')
+
+fedFunds_link <- 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS'
+download.file(fedFunds_link,
+              'FEDFUNDS.csv'
+              )
+fedFunds <- read.csv("FEDFUNDS.csv") %>%
+  mutate(fedfund_yoyGrowth = round(100*((FEDFUNDS/dplyr::lag(FEDFUNDS,12))-1),2)
+                         )
+
+fedFunds <- year_month_extract(fedFunds$observation_date,
+                   fedFunds)
+fedFunds$observation_date <- NULL
+fedFunds$observation_day <- NULL
+
+#Economic Policy Uncertainty Index for United States
+epu_link <-'https://fred.stlouisfed.org/graph/fredgraph.csv?id=USEPUINDXD'
+
+#Equity Market-related Economic Uncertainty Index
+equity_epu_link <- 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=WLEMUINDXD'
+
+#Equity Market Volatility: Infectious Disease Tracker
+infect_epu_link <- 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=INFECTDISEMVTRACKD'
+
+download.file(epu_link,
+              'epu_link.csv')
+download.file(equity_epu_link,
+              'equity_epu_link.csv')
+download.file(infect_epu_link,
+              'infect_epu_link.csv'  )
+
+
+epu<- read.csv('epu_link.csv') %>%
+  rename(epu_val = USEPUINDXD) 
+epu <- year_month_extract(epu$observation_date,
+                          epu)
+epu$epu_val_yoy <-yoy_growth_calc(epu,
+                                  'epu_val')
+         
+epu$epu_val_dailyGrowth <- daily_growth_calc(epu, 'epu_val')
+
+equity_epu <- read.csv('equity_epu_link.csv') %>%
+  rename(equity_epu_val = WLEMUINDXD)
+
+equity_epu <- year_month_extract(equity_epu$observation_date,
+                          equity_epu)
+equity_epu$equity_epu_val_yoy<- yoy_growth_calc(equity_epu,
+                                                'equity_epu_val')
+
+equity_epu$equity_epu_val_dailyGrowth <- daily_growth_calc(equity_epu,
+                                                           'equity_epu_val')
+infect_epu <- read.csv('infect_epu_link.csv') %>%
+  rename(infect_epu_val=INFECTDISEMVTRACKD)
+
+infect_epu <- year_month_extract(infect_epu$observation_date,
+                          infect_epu)
+
+infect_epu$infect_epu_val_yoy<- yoy_growth_calc(infect_epu,
+                                                'infect_epu_val')
+
+infect_epu$infect_epu_val_dailyGrowth <- daily_growth_calc(infect_epu,
+                                                           'infect_epu_val')
+
+```
+
+
+
+
+```{r}
+
+
+market_join_keys = c('Date',
+                    'observation_year',
+                    'observation_month',
+                 'observation_day')
+
+cov_join_keys = c('Date'='observation_date',
+                    'observation_year',
+                    'observation_month',
+               'observation_day')
+
+fedFund_join_keys2 = c(
+                   'observation_year',
+                    'observation_month')
+
+
+sp500_charData <- left_join(SPY_price, 
+                                  VIX_price, 
+                                  by = market_join_keys) %>%
+                        left_join(treasury10yrYield, by = cov_join_keys) %>%
+                        left_join(junkBondYield, by = cov_join_keys ) %>%
+                        left_join(epu, by = cov_join_keys) %>%
+                       left_join(equity_epu, by = cov_join_keys) %>%
+                      # left_join(infect_epu, by = cov_join_keys) %>%
+                 left_join(fedFunds, by = fedFund_join_keys2) %>%
+                 tidyr::fill(VIX_close_price,
+                             SPY_yoyGrowth,
+                             SPY_dailyGrowth,
+                             SPY_daily_upInd,
+                             SPY_daily_downInd,
+                             SPY_daily_sigUpInd,
+                             SPY_daily_sigDownInd,
+                             SPY_daily_sigInd,
+                             SPY_log_volume,
+                             VIX_yoyGrowth,
+                             VIX_dailyGrowth,
+                             treasury10Yield,
+                             treasury10Yield_yoyGrowth,
+                             treasury10Yield_dailyGrowth,
+                             junkBondSpread,
+                             junkBondSpread_yoyGrowth,
+                             junkBondSpread_dailyGrowth,
+                             epu_val,
+                             epu_val_yoy,
+                             epu_val_dailyGrowth,
+                             equity_epu_val,
+                             equity_epu_val_yoy,
+                             equity_epu_val_dailyGrowth,
+                             # infect_epu_val,
+                             # infect_epu_val_yoy,
+                             # infect_epu_val_dailyGrowth,
+                             FEDFUNDS,
+                             fedfund_yoyGrowth,
+                              .direction = 'down')
+
+sp500_charData[,grepl('_day+', 
+                      colnames(sp500_charData))] <- NULL
+sp500_charData <- na.omit(sp500_charData)
+sp500_charData <- sp500_charData[order(sp500_charData$Date),]
+
+index_vars = c('Date',
+               'observation_year',
+               'observation_month',
+               'observation_day'
+               )
+outcomes = c('SPY_close_price',
+             'SPY_daily_upInd',
+             'SPY_daily_downInd',
+             'SPY_daily_sigUpInd50',
+             'SPY_daily_sigDownInd50',
+             'SPY_daily_sigInd50',
+             'SPY_daily_sigIndCat50'
+             )
+sp500_charData[,outcomes] <- apply(sp500_charData[,outcomes],
+                                           2,
+                                           as.factor)
+
+      
+sp500_charData$observation_month <- factor(sp500_charData$observation_month)
+sp500_charData$observation_year <- factor(sp500_charData$observation_year)
+
+write.csv(sp500_charData,
+          'sp500_charData.csv')
+
+```
+
+```{r}
+index_vars = c('Date',
+               'observation_year',
+               'observation_month',
+               'observation_day'
+               )
+outcomes = c('SPY_close_price',
+             'SPY_daily_upInd',
+             'SPY_daily_downInd',
+             'SPY_daily_sigUpInd',
+             'SPY_daily_sigDownInd',
+             'SPY_daily_sigInd',
+             'SPY_daily_sigIndCat'
+             )
+sp500_charData <- read.csv('sp500_charData.csv',
+                           row.names = 'X')
+
+discard_inds = unlist(sapply(c(index_vars, 
+                           outcomes),
+                         function(var){which(grepl(var,
+                                                   colnames(sp500_charData)))}))
+
+library(FactoMineR)
+library(factoextra)
+
+pcr_sp500 <- prcomp(sp500_charData[,-discard_inds],
+                    center = TRUE,
+                    scale. = TRUE)
+supp_pca_results_var <- get_pca_var(pcr_sp500)
+readr::write_rds(supp_pca_results_var,
+          'supp_pca_results_var.rds')
+
+supp_pca_results_ind <- get_pca_ind(pcr_sp500)
+
+readr::write_rds(supp_pca_results_ind,
+          'supp_pca_results_ind.rds')
+
+pcr_sp500_vars <- data.matrix(sp500_charData[,-discard_inds]) %*%
+  data.matrix(pcr_sp500$rotation)
+
+pcr_sp500_vars <- cbind(pcr_sp500_vars,
+                   sp500_charData[,outcomes])
+
+
+screeplot(pcr_sp500)
+summary(pcr_sp500)
+```
+```{r}
+
+pca_plot_gen = function(pca_ind, 
+                        pca_overall,
+                        data,
+                        outcome_used){
+  outcomes_uniq <- unique(data[,outcome_used])
+  outcomes_uniq <- outcomes_uniq[order(outcomes_uniq)]
+  colors_used <- colorRampPalette(c('dodgerblue4',
+                                     'orange'))(length(outcomes_uniq))
+  plt1 <- ggplot(data.frame(pca_ind$coord))+
+    geom_point(aes(x=Dim.1,
+                   y=Dim.2,
+                 col=factor(data[,outcome_used])))+
+    scale_color_manual(name = 'Indicator',
+                       label = outcomes_uniq,
+                       breaks = outcomes_uniq,
+                       values = colors_used)+
+    labs(title =  sprintf('PCA Plot of %s Along Dim 1 & 2',
+                         outcome_used))
+  message('1')
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaPlotDim1Dim2.jpeg',
+                 outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  message('1.5')
+  plt2 <- ggplot(data.frame(pca_ind$coord))+
+    geom_point(aes(x=Dim.1,
+                   y=Dim.3,
+                 col=factor(data[,outcome_used])))+
+    scale_color_manual(name = 'Indicator',
+                       label = outcomes_uniq,
+                       breaks = outcomes_uniq,
+                       values = colors_used)+
+    labs(title = sprintf('PCA Plot of %s Along Dim 1 & 3',
+                         outcome_used))
+  message('2')
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaPlotDim1Dim3.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  
+  plt3 <- ggplot(data.frame(pca_ind$coord))+
+    geom_point(aes(x=Dim.2,
+                   y=Dim.3,
+                 col=factor(data[,outcome_used])))+
+    scale_color_manual(name = 'Indicator',
+                       label = outcomes_uniq,
+                       breaks = outcomes_uniq,
+                       values = colors_used)+
+    labs( title = sprintf('PCA Plot of %s Along Dim 2 & 3',
+                         outcome_used))
+  message('3')
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaPlotDim2Dim3.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  
+  plt4 <- fviz_pca_biplot(pca_overall,
+             choice = 'var',
+             geom.ind = 'point',
+             col.var = 'dodgerblue4',
+             repel=TRUE,
+             alpha.ind = 0.05,
+             title =  sprintf('PCA Biplot of %s Along Dim 1 & 2',
+                         outcome_used))
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaBiPlotDim1Dim2.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  
+  plt5 <- fviz_pca_biplot(pca_overall,
+             choice = 'var',
+             axes = c(1,3),
+             geom.ind = 'point',
+             col.var = 'dodgerblue4',
+             repel=TRUE,
+             alpha.ind = 0.05,
+             title =  sprintf('PCA Biplot of %s Along Dim 1 & 3',
+                         outcome_used))
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaBiPlotDim1Dim3.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  plt6 <- fviz_pca_biplot(pca_overall,
+             choice = 'var',
+             axes = c(2,3),
+             geom.ind = 'point',
+             col.var = 'dodgerblue4',
+             repel=TRUE,
+             alpha.ind = 0.05,
+             title =  sprintf('PCA Biplot of %s Along Dim 2 & 3',
+                         outcome_used))
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaBiPlotDim2Dim3.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  plt7 <- fviz_contrib(pca_overall,
+             choice = 'var',
+             axes=1)
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaContribDim1.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  plt8 <- fviz_contrib(pca_overall,
+             choice = 'var',
+             axes=2)
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaContribDim2.jpeg',outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  plt9 <- fviz_contrib(pca_overall,
+             choice = 'var',
+             axes=3)
+  ggsave(sprintf('EDA_plots\\%s\\%s_pcaContribDim3.jpeg',
+                 outcome_used,
+                 outcome_used),
+         device = 'jpeg')
+  
+}
+
+```
+
+```{r}
+
+sapply(outcomes[-1],
+       function(outcome){
+         print(outcome)
+         pca_plot_gen(supp_pca_results_ind,
+             pcr_sp500,
+             sp500_charData,
+            outcome)
+       })
+
+```
+
+
+```{r}
+
+pca_var_ret = function(pca_result_var, cos_threshold = 0.5, axes){
+  ret_vars = sapply(1:axes,
+         function(axis_used){
+            contrib_used = supp_pca_results_var$contrib[,axis_used]
+            cos2_vals = supp_pca_results_var$cos2[,axis_used]   
+            
+            contrib_var_ret = names(contrib_used[which(contrib_used>(100/length(contrib_used
+                                                                          )
+                                                               )
+                                                 )
+                                           ])
+            cos2_var_ret =names( cos2_vals[which(cos2_vals>cos_threshold)])
+            return(intersect(contrib_var_ret,
+                             cos2_var_ret))
+         }
+        
+  )
+  return(unique(unlist(ret_vars)) )
+
+}
+pcaVarRets = pca_var_ret(supp_pca_results_var,
+            
+            cos_threshold = 0.5,
+            
+            axes = ncol(supp_pca_results_var$coord))
+
+
+readr::write_rds(pcaVarRets,
+                 'pcaVarRets.rds')
+pcaVarRets
+```
+
+```{r}
+library(glmnet)
+
+lasso_selection = function(data,
+                           outcome_used,
+                           family_used = 'binomial'){
+  outcome_data <- data[,outcome_used]
+  discard_inds = which(colnames(data) %in% c(index_vars,
+                                             outcomes))
+  lasso_sel_var_model <- glmnet(data[,-discard_inds],
+                              outcome_data,
+                              family = family_used,
+                              alpha = 1)
+  if(family_used=='multinomial'){
+    lassoVarRet = unique(unlist(lapply(lasso_sel_var_model$beta,
+                        function(lambdaCoefs){
+                          coefs <- lambdaCoefs[,ncol(lambdaCoefs)]
+                          names(coefs)[which(abs(coefs)!=0)]
+                          
+                        })))
+  }
+  else{
+    lassoCoefs = lasso_sel_var_model$beta[,ncol(lasso_sel_var_model$beta)]
+    lassoVarRet = names(lassoCoefs)[which(abs(lassoCoefs)!=0)]
+    
+  }
+  
+  lassoVarRet
+}
+
+
+post_lasso_selection_model = function(data, outcome_used,
+                                      family_used = 'binomial'){
+  covar_ret = lasso_selection(data,
+                              outcome_used,
+                              family_used)
+
+  if(family_used!='multinomial'){
+    return(glm(as.formula(paste(outcome_used,
+                         paste('-1',
+                               paste(covar_ret,
+                                     collapse = '+'),
+                               sep = '+')
+                         ,sep = '~')
+                 ),
+      family = family_used,
+      data =data))
+  }
+  else{
+    return(nnet::multinom(as.formula(paste(outcome_used,
+                         paste('-1',
+                               paste(covar_ret,
+                                     collapse = '+'),
+                               sep = '+')
+                         ,sep = '~')
+                 ),
+      data =data))
+    
+  }
+  
+  
+}
+
+names(outcomes) <- outcomes
+```
+
+
+```{r}
+
+post_sel_models_base <- lapply(outcomes,
+                               function(outcome){
+                                 print(outcome)
+                                 outcome_uniq <- unique(sp500_charData[,
+                                                                       outcome]
+                                                        )
+                                 if(length(outcome_uniq)>10){
+                                   f_used='gaussian'
+                                 }
+                                 
+                                 else{
+                                   if(length(outcome_uniq)>2 ){
+                                   f_used = 'multinomial'
+                                   }
+                                   else{
+                                     f_used = 'binomial'
+                                   }
+                                   
+                                 }
+                                 print(f_used)
+                                 post_lasso_selection_model(sp500_charData,
+                                                            outcome,
+                                                            f_used
+                                                            )
+                                 })
+
+readr::write_rds(post_sel_models_base,
+                 'post_sel_models_base.rds'
+                 )
+```
+
+```{r}
+
+post_sel_models_pca <- lapply(outcomes,
+                               function(outcome){
+                                 outcome_uniq <- unique(pcr_sp500_vars[,
+                                                                       outcome]
+                                                        )
+                                 if(length(outcome_uniq)>10){
+                                   f_used='gaussian'
+                                 }
+                                 
+                                 else{
+                                   if(length(outcome_uniq)>2 ){
+                                   f_used = 'multinomial'
+                                   }
+                                   else{
+                                     f_used = 'binomial'
+                                   }
+                                   
+                                 }
+                                 post_lasso_selection_model(pcr_sp500_vars,
+                                                            outcome,
+                                                            f_used
+                                                          )
+                                 })
+
+readr::write_rds(post_sel_models_pca,
+                 'post_sel_models_pca.rds')
+
+```
+
+lasso_residuals <- sp500_charData$SPY_daily_upInd - 
+                    predict(lasso_peOPforwardE_model,
+                            data.matrix(sp500_charData[,-discard_inds]),
+                            s = tail(lasso_peOPforwardE_model$lambda,1))
+
+
+plot(sp500_charData$SPY_daily_sigUpInd,lasso_residuals)
+
+
+```{r}
+
+xgboost_model_sel = function(data = sp500_charData,
+                             outcome_used,
+                             covar_ret,
+                             covar_ret_name = 'pcaVarRets',
+                             initialWindow_used = 1200,
+                             horizon_start =1,
+                             horizon_total = 10,
+                             isFixed = TRUE,
+                             window_used = 120){
+  obj_used = "binary:logistic"
+  eval_used = 'auc'
+  
+
+  if(outcome_used==outcomes[1]){
+    obj_used = "reg:squarederror"
+    eval_used = 'rmse'
+  }
+  if(outcome_used==tail(outcomes,1)){
+    obj_used = "multi:softmax"
+    eval_used = 'auc'
+    
+    
+  }
+  sapply(horizon_start:horizon_total,
+         
+         function(horizon_used){
+           
+            file_name <- paste('xgboost_outcome',
+                     outcome_used,
+                     'initWindow',
+                     initialWindow_used,
+                     'horizon',
+                     horizon_used,
+                     'fixed',
+                     isFixed,
+                     'window',
+                     window_used,
+                     covar_ret_name,
+                     sep = '_')
+            print(Sys.time())
+            print(file_name)
+  registerDoFuture()
+  plan(multisession)
+  
+  params <-  expand.grid(list(eta =seq(0.1,0.9,0.2),
+                                colsample_bytree =seq(0.5, 1,0.25),
+                              subsample =seq(0.5,1,0.25),
+                             max_depth = seq(2,6,4),
+                             nrounds = c(50,150)
+                              )
+                         )
+  data$target_lag1 <- dplyr::lag(data[,outcome_used],
+                                 1)
+  data$target <- dplyr::lead(data[,outcome_used],
+                                       horizon_used)
+  data <- data[!is.na(data$target),]
+  data <- data[!is.na(data$target_lag1),]
+  data_timeSplits <- caret::createTimeSlices(y = 1:nrow(data),
+                                     initialWindow = initialWindow_used,
+                                     horizon = window_used,
+                                     fixedWindow =isFixed,
+                                     skip = window_used%/%2)
+  
+  covar_ret_par_testing <- foreach(param_index = 1:nrow(params),
+                                   .combine = 'rbind') %dorng% {
+    eta_used <- params[param_index,][1]
+    colsample_used <- params[param_index,][2]
+    subsample_used <- params[param_index,][3]
+    max_depth_used <- params[param_index,][4]
+    nrounds_used <- params[param_index,][5]
+    
+    params_used<- list(eta=eta_used,
+                     colsample_bytree = colsample_used,
+                     subsample = subsample_used,
+                     max_depth = max_depth_used,
+                     objective = obj_used,
+                     eval_metric = eval_used)
+    if(grepl('multi',obj_used)){
+      
+      params_used <- list(eta=eta_used,
+                     colsample_bytree = colsample_used,
+                     subsample = subsample_used,
+                     max_depth = max_depth_used,
+                     objective = obj_used,
+                     eval_metric = eval_used,
+                     num_class = 3)
+      
+      
+    }
+    covar_ret_model_res <-foreach(x = 1:length(data_timeSplits$train),
+                                   .combine = 'c' ) %dorng%{
+                                     
+           train_indexes_used <- data_timeSplits$train[[x]]
+           test_indexes_used <- data_timeSplits$test[[x]]
+           model_used <- xgboost::xgboost(data = data.matrix(data[train_indexes_used,
+                                                                c(covar_ret,
+                                                                'target_lag1',
+                                                                outcome_used)
+                                                                ]
+                                                             ),
+                                          label =data$target[train_indexes_used],
+                                          nrounds = as.numeric(nrounds_used),
+                                          early_stopping_rounds = 3,
+                                          params = params_used,
+                                          verbose = FALSE)
+           preds_used <- predict(model_used, 
+                                 data.matrix(
+                                 data[test_indexes_used,
+                                      c(covar_ret,
+                                       'target_lag1',
+                                       outcome_used)
+                                      ]
+                                 )
+                                 )
+          
+           if(eval_used == 'rmse'){
+             residuals <- as.numeric(unlist(data$target[test_indexes_used])) - preds_used
+             return(sqrt(mean(residuals^2, na.rm = TRUE)))
+           }
+           
+           integer_preds <- as.integer(round(preds_used))
+          
+           empir_data <- as.integer(unlist(data$target[test_indexes_used]))
+           return(sum(integer_preds==empir_data)/length(preds_used))
+           
+           
+                                   }
+      covar_ret_model_res
+    
+                                   }
+  covar_ret_par_testing <- data.frame(covar_ret_par_testing)
+  row.names(covar_ret_par_testing) <- paste('eta:',
+                                            params$eta,
+                                            '_colSample:',
+                                            params$colsample_bytree,
+                                            '_subsample:',
+                                            params$subsample,
+                                            '_max_depth:',
+                                            params$max_depth,
+                                            '_nrounds:',
+                                            params$nrounds,
+                                            sep='')
+  
+  # print(covar_ret_par_testing)
+  
+  write.csv(covar_ret_par_testing,
+            sprintf('xgboost_models\\momentum\\%s_par_testing.csv',
+                    file_name)
+            )
+         })
+}
+
+```
+     
+```{r}
+library(doFuture)
+library(doRNG)
+
+library(xgboost)
+postSelBase <- readRDS('post_sel_models_base.rds')
+
+postSelPca <- readRDS('post_sel_models_pca.rds')
+
+pcaVarRets <- readRDS('pcaVarRets.rds')
+# $limit=50&$offset=150
+sapply(outcomes,
+       function(outcome){
+         xgboost_model_sel(data = sp500_charData,
+                  outcome,
+                  pcaVarRets,
+                  # initialWindow_used = 600,
+                  horizon_start = 11,
+                  horizon_total = 20)
+       })
+
+sapply(outcomes,
+       function(outcome){
+         xgboost_model_sel(data = sp500_charData,
+                  outcome,
+                  names(post_sel_models_base[[outcome]]$coefficients),
+                  'postSelBase',
+                  # initialWindow_used = 600,
+                  horizon_start = 11,
+                  horizon_total = 20)
+       })
+
+sapply(outcomes[-1],
+       function(outcome){
+         xgboost_model_sel(data = sp500_charData,
+                  outcome,
+                  pcaVarRets,
+                  # initialWindow_used = 600,
+                  horizon_start = 11,
+                  horizon_total = 20,
+                  isFixed = FALSE)
+       })
+
+sapply(outcomes,
+       function(outcome){
+         xgboost_model_sel(data = sp500_charData,
+                  outcome,
+                  names(post_sel_models_base[[outcome]]$coefficients),
+                  'postSelBase',
+                  # initialWindow_used = 600,
+                  horizon_start = 11,
+                  horizon_total = 20,
+                  isFixed = FALSE)
+       })
+
+
+
+
+```
+
+
+```{r}
+par_outcome_expl = function(outcome, 
+                            path_used = 'xgboost_models\\momentum',
+                            pred_data = sp500_charData
+                            ){
+  files_used <- list.files(path_used)
+  files_used <- files_used[grepl(sprintf('%s_',
+                                         outcome),
+                                 files_used)]
+  
+  result_table <- foreach(file = files_used,
+          .combine = 'rbind') %do% {
+            # message(file)
+            data_used <- read.csv(paste(path_used,
+                                        file,
+                                        sep = '\\'),
+                                  row.names = 'X'
+                                  )
+            initWindow_used <- as.numeric(regmatches(file,
+                            regexpr("(?<=initWindow_).*(?=_horizon)",
+                                    file, 
+                                    perl = TRUE)) )
+            horizon_used <-as.numeric(regmatches(file,
+                            regexpr("(?<=horizon_).*(?=_fixed)",
+                                    file, 
+                                    perl = TRUE)) )
+            covars_used <- regmatches(file,
+                            regexpr("(?<=_window_[[:digit:]]{3}_).*(?=_par_testing)",
+                                    file, 
+                                    perl = TRUE))
+            
+            fixed_used <- regmatches(file,
+                            regexpr("(?<=fixed_).*(?=_window)",
+                                    file, 
+                                    perl = TRUE))
+            
+            
+            rmse_summ <-t(apply(data_used, 
+                               1,
+                               function(data){
+                                 result <- summary(data)
+                                 result_name <- names(result)
+                                 result_sd <- sd(result, na.rm = TRUE)
+                                 result_skew <- moments::skewness(result,
+                                                                  na.rm = TRUE)
+                                 result_kurtosis <- moments::kurtosis(result,
+                                                                       TRUE)
+                                 result_1quant <- quantile(result,
+                                                           0.01)
+                                 result_99quant <- quantile(result,
+                                                           0.99)
+                                 result <- c(result,
+                                             result_sd,
+                                             result_skew,
+                                             result_kurtosis,
+                                             result_1quant,
+                                             result_99quant,
+                                             horizon_used)
+                                 names(result) <- c(result_name,
+                                                    'sd',
+                                                    'skew',
+                                                    'kurtosis',
+                                                    'onePercQuant',
+                                                    'ninetyNinePercQuant',
+                                                    'horizon')
+                                 result
+                                 
+                                 
+                                 
+                               }
+                               ))
+            row.names(rmse_summ) <- paste(row.names(rmse_summ),
+                                          '_initWindow_',
+                                          initWindow_used,
+                                          '_horizon_',
+                                          horizon_used,
+                                          '_fixed_',
+                                          fixed_used,
+                                          '_covars_',
+                                          covars_used,
+                                          sep = ''
+                                          )
+            # message('3')
+            rmse_summ <- rmse_summ[order(rmse_summ[,'Mean'],
+                                         decreasing = TRUE),]
+            
+            
+            params_used <- as.numeric(na.omit((stringr::str_extract(strsplit(row.names(rmse_summ)[1],
+                                             split = '_')[[1]], 
+                                    '[[:digit:]]+\\.?[[:digit:]]*'))))
+            # message('4')
+            if(grepl('post',
+                     covars_used)){
+              
+              ret_vars <- names(get(covars_used)[[outcome]]$coefficients)
+            }
+            else{
+              ret_vars <- get(covars_used)
+            }
+            
+            rows_used = nrow(pred_data)
+            
+            if(fixed_used=='TRUE'){
+              pred_data_used <-  pred_data[(rows_used-initWindow_used):rows_used,
+                                               ]
+            }
+            else{
+              pred_data_used <- pred_data
+            }
+            pred_data_used$target_lag1 <- dplyr::lag(pred_data_used[,outcome],
+                                                1)
+            pred_data_used$target <- dplyr::lead(pred_data_used[,outcome],
+                                            horizon_used)
+            # message('5')
+            pred_data_used <- na.omit(pred_data_used)
+            xgboost_model <- xgboost::xgboost(data = data.matrix(pred_data_used[,c(ret_vars,
+                                                                              'target_lag1',
+                                                                              outcome)]),
+                                                label = data.matrix(pred_data_used$target),
+                                                nrounds = params_used[5],
+                                                early_stopping_rounds = 3,
+                                                params = list(eta=params_used[1],
+                                                              colsample_bytree = params_used[2],
+                                                              subsample = params_used[3],
+                                                              max_depth = params_used[4]
+                                                              
+                                                              ),
+                                              verbose = FALSE)
+            file_name = paste(outcome, 
+                              initWindow_used,
+                              horizon_used,
+                              fixed_used,
+                              paste(covars_used, collapse = '_'),
+                              paste(params_used,
+                              collapse = '_'),
+                              sep = '_')
+            
+          xgboost::xgb.save(xgboost_model,
+                            sprintf('xgboost_models\\xgboostModel_%s.model',
+                                    file_name
+                                    ))
+
+
+            rmse_summ
+          }
+  if(outcome==outcomes[1]){
+    result_table <- result_table[order(result_table[,'horizon'],
+                                     result_table[,'Mean'],
+                                     decreasing = FALSE),]  
+  }
+  else{
+    result_table <- result_table[order(result_table[,'horizon'],
+                                     result_table[,'Mean'],
+                                     decreasing =c(FALSE,TRUE)),]  
+  }
+  
+  
+  write.csv(result_table,
+                      sprintf('%s_covar_ret_par_testing.csv',
+                                          outcome
+                                          ))
+    result_table
+}
+
+
+
+par_outcome_metrics = lapply(outcomes[6],
+                             par_outcome_expl
+                             )
+
+
+# names(par_outcome_metrics) <- outcomes
+# readr::write_rds(par_outcome_metrics,
+#                  'par_outcome_metrics.rds')
+```
+
+
+
+```{r}
+horizon_total <- 10
+xgboost_pred =  function(outcome,
+                         horizon_total){
+         print(outcome)
+         outcome_preds <- foreach(horizon_used = 1:horizon_total,
+                 .combine = 'c') %do% {
+                  tuning_grid_file = read.csv(sprintf( '%s_covar_ret_par_testing.csv',
+                                                       outcome
+                                                       ),
+                                              row.names = 'X')
+                
+                  tune_params = row.names(dplyr::filter(tuning_grid_file,
+                                                        horizon==horizon_used)
+                                          )[1]
+                  
+                  fixed_used = regmatches(tune_params,
+                            regexpr("(?<=fixed_).*(?=_covars)",
+                                    tune_params, 
+                                    perl = TRUE))
+                  covars_used = regmatches(tune_params,
+                            regexpr("(?<=covars_).*(?=$)",
+                                    tune_params, 
+                                    perl = TRUE))
+                  
+                  file_name = list.files('xgboost_models')[grepl(paste(outcome,
+                                                       horizon_used,
+                                                       fixed_used,
+                                                       covars_used,
+                                                       sep='_'),
+                                                    list.files('xgboost_models')
+                                                 )
+                                           ][[1]]
+                 
+                  xgboost_model <- xgboost::xgb.load(sprintf('xgboost_models\\%s',
+                                                             file_name))
+                 
+                  
+                  if(grepl('post',
+                     covars_used)){
+                    ret_vars <- names(get(covars_used)[[outcome]]$coefficients)
+                    }
+                  else{
+                    ret_vars <- get(covars_used)
+                  }
+                  
+                  
+                  data_used <- sp500_charData
+                  
+                  
+                  data_used$target_lag1 <- dplyr::lag(data_used[,outcome],
+                                                1)
+                  data_used <- data_used[!is.na(data_used$target_lag1),]
+            
+                  xgb_preds_apply <-  as.numeric(predict(xgboost_model, 
+                                             data.matrix(tail(data_used[,c(ret_vars,
+                                                          'target_lag1',
+                                                          outcome)],1))
+                                             ))
+                
+                  xgb_preds_apply
+                 }
+         
+         write.csv(outcome_preds,
+                   sprintf('%s_preds.csv',
+                                    outcome
+                                    ))
+         outcome_preds
+       }
+
+```
+
+
+
